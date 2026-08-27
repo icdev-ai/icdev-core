@@ -84,7 +84,29 @@ pip install -e ../icdev-core     # development, from a sibling checkout
 Releases are semver tags; the wheel is a GitHub release asset, mirrored to a local wheelhouse
 for `pip install --no-index --find-links` on air-gapped installs. Pure Python, no build step.
 
-## Acceptance
+## Acceptance — what this package can and cannot prove
 
-The carve-out is proven when ICDEV[FT] drops its `sys.path.insert` of the IT checkout and
-installs this package instead.
+The original criterion here read *"proven when ICDEV[FT] drops its `sys.path.insert` of the IT
+checkout and installs this package instead."* **That is not reachable, and stating it made a
+finished carve-out look permanently incomplete.** Measured on ICDEV[FT] 2026-08-27:
+
+| ICDEV[FT] modules importing | count | supplied by |
+|---|---|---|
+| `icdev.core.*` | 32 | **this package** |
+| `tools.*` | 72 | only the ICDEV[IT] checkout |
+
+`tools` exists because ICDEV[IT]'s `icdev/__init__.py` binds it to `icdev.tools`. This package
+ships `icdev/core/` and deliberately nothing else, so it cannot supply it and installing it
+cannot remove that checkout.
+
+**What IS achieved, and is verified:**
+
+- ICDEV[IT] no longer ships `icdev/core` and depends on this distribution (`xcore-cut-02`).
+- Both parents pin a tag, never a branch, and a parent's own gate fails if it calls a symbol the
+  pinned core does not export (`coherence_checker --check core_api`).
+- A change here is proven against ICDEV[IT] **before** merge by `core-compat.yml`, and against
+  ICDEV[FT] daily by the matching workflow in that repository (`xcore-compat-01`).
+
+**What is still outstanding:** ICDEV[FT]'s 72 `tools.*` imports. Removing that coupling is its
+own piece of work — a second extraction, or repointing those callers — and is not a side effect
+of this package existing.
