@@ -87,6 +87,34 @@ jobs:
           print("no parent-tree imports in icdev/core")
           PY
       - run: pytest tests -q
+      # THE BUILT WHEEL IS INSPECTED, not just the source tree. `icdev` is a PEP 420
+      # namespace package here (no icdev/__init__.py) so the ICDEV[IT] parent's __init__ is
+      # the only one that executes -- see tests/test_namespace_package.py. The cost of that
+      # choice is that setuptools' `find` must be in namespace mode: if `namespaces` ever
+      # defaults off, discovery returns NOTHING and this repo happily publishes a wheel with
+      # no `icdev.core` in it. Nothing here would fail -- the ImportError would surface in a
+      # PARENT, a release later, far from the change that caused it.
+      - name: The built wheel contains icdev/core and no icdev/__init__.py
+        run: |
+          pip install build
+          python -m build --wheel --outdir dist_check
+          python - <<'PY'
+          import pathlib, sys, zipfile
+          wheels = sorted(pathlib.Path("dist_check").glob("*.whl"))
+          if not wheels:
+              sys.exit("no wheel was built")
+          names = zipfile.ZipFile(wheels[-1]).namelist()
+          missing = [n for n in ("icdev/core/__init__.py", "icdev/core/paths.py",
+                                 "icdev/core/context.py", "icdev/core/domain.py",
+                                 "icdev/core/sensitivity.py",
+                                 "icdev/core/schema/tables.yaml") if n not in names]
+          if missing:
+              sys.exit("wheel %s is missing: %s" % (wheels[-1].name, missing))
+          if "icdev/__init__.py" in names:
+              sys.exit("wheel ships icdev/__init__.py -- it must stay a namespace package")
+          print("wheel %s: %d entries, icdev.core present, no icdev/__init__.py"
+                % (wheels[-1].name, len(names)))
+          PY
 
   security:
     name: Security Scan

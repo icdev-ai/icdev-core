@@ -32,6 +32,31 @@ context.load_env          3    domain.{Domain, DomainError, load_domain}  1
 context.check_identity    1    sensitivity                    (IT row_security)
 ```
 
+## `icdev` is a namespace package, and that is load-bearing
+
+This distribution ships `icdev/core/` and **no `icdev/__init__.py`**, so `icdev` is a PEP 420
+namespace package.
+
+Both this distribution and the ICDEV[IT] parent install into the same `icdev` name. A regular
+package has ONE `__path__`, so whichever were found first would win and the other's subpackages
+would silently vanish -- `icdev.core` unimportable in one direction, `icdev.tools` in the other.
+That is exactly what was measured before the fix: with the parent installed editable, `icdev`
+resolved to `C:/AI/ICDev/icdev` and installing this package beside it changed nothing at all.
+
+`pkgutil.extend_path` in **both** distributions was tried first and rejected. It merges
+`__path__` correctly, but only ONE `icdev/__init__.py` ever *executes* -- and when this one won,
+the parent's `_alias_tools_namespace()` never ran: the function that makes ~1,900
+`from tools.X import ...` imports resolve inside the parent's published wheel. An
+order-dependent silent break of every installed deployment is worse than the shadowing it was
+meant to fix.
+
+Shipping none here makes the parent's the only `__init__.py`, so it runs whatever the path
+order, and `extend_path` on the parent's side pulls `icdev/core/` in beside `icdev/tools/`.
+
+Pinned by `tests/test_namespace_package.py` and by a CI step that inspects the built wheel --
+because if setuptools' `namespaces` discovery ever defaults off, this repo publishes a wheel
+with no `icdev.core` in it and nothing here notices; the ImportError surfaces in a parent.
+
 ## What is deliberately NOT in here
 
 **`shim.py` stayed in the IT parent.** It exists solely to make `tools.X` and
