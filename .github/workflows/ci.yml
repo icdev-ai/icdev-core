@@ -30,7 +30,16 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install ruff
-      - run: ruff check icdev tests
+      # THE SELECTION MIRRORS THE PARENT'S LINT JOB EXACTLY. icdev-ci.yml runs
+      # `ruff check tools/ tests/ --select E,F,W --ignore E402,...,F404`, and a bare
+      # `ruff check` is NOT the same thing: it takes ruff's own defaults, which drift as ruff
+      # is released and which pulled in RUF022/S603/PLW1510 here -- rules the parents do not
+      # enforce and whose code the parents therefore ship. A core that rejects code its own
+      # parents accept is a gate nobody can satisfy.
+      #
+      # `pip install ruff` is unpinned upstream too, so the SELECTION is what has to be
+      # explicit: it makes the rule set independent of whichever ruff the runner resolves.
+      - run: ruff check icdev tests --select E,F,W --ignore E402,E501,E701,E702,E721,E722,E731,E741,F404
 
   test:
     name: Test
