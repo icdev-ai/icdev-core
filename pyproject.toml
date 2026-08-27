@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+# THE DISTRIBUTION IS `icdev-core`; THE IMPORT ROOT STAYS `icdev.core` (xcore-boot-01).
+# Both parents already write `from icdev.core.paths import repo_root` and
+# `from icdev.core.context import assert_identity` -- 32 files in ICDEV[FT] alone. Renaming
+# the import root would rewrite every one of them for no gain, so only the DISTRIBUTION name
+# is new. The IT parent keeps the PyPI name `icdev` and depends on this.
+name = "icdev-core"
+version = "0.1.0"
+description = "ICDEV shared core: domain declaration, path resolution, identity assertion and sensitivity labelling for the ICDEV[IT] and ICDEV[FT] parents."
+readme = "README.md"
+requires-python = ">=3.9"
+license = "Apache-2.0"
+authors = [
+    {name = "Sovanna Chuon"},
+]
+keywords = ["icdev", "domain", "paths", "identity", "sensitivity"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+]
+
+# DELIBERATELY MINIMAL, and it is the point of the carve-out. `icdev/core` imports only
+# stdlib plus these two, and both are imported LOCALLY inside the functions that need them so
+# that importing the module itself pulls in no third-party code. Verified before the split:
+# zero dependency on `tools/`, which is what made this package separable at all.
+dependencies = [
+    "PyYAML>=6.0",
+    "python-dotenv>=1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/icdev-ai/icdev-core"
+
+[tool.setuptools.packages.find]
+include = ["icdev*"]
+
+[tool.setuptools.package-data]
+"icdev.core" = ["schema/*.yaml"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py39"

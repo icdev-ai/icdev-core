@@ -1,0 +1,90 @@
+# icdev-core CI (xcore-boot-01).
+#
+# THE JOB NAMES MIRROR THE PARENT'S REQUIRED SET -- Lint / Test / Security Scan -- because
+# those are what branch protection accepts in icdev-ai/icdev, and a core whose gate names
+# differ from its parents' would need a second rule nobody maintains. Helm Lint is NOT copied:
+# this package ships no charts.
+name: icdev-core CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+defaults:
+  run:
+    working-directory: ${{ github.workspace }}
+
+env:
+  PYTHONPATH: ${{ github.workspace }}
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install ruff
+      - run: ruff check icdev tests
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -e . pytest
+      # THE IMPORT ROOT IS ASSERTED BEFORE THE SUITE RUNS. The whole carve-out rests on
+      # `icdev.core` still importing under its old name from a NEW distribution; a suite that
+      # passed while the import root had silently moved would prove nothing.
+      - name: Import root is unchanged
+        run: |
+          python -c "
+          from icdev.core.paths import repo_root
+          from icdev.core.context import assert_identity, check_identity, load_env
+          from icdev.core.domain import Domain, DomainError, load_domain
+          from icdev.core import sensitivity
+          print('icdev.core public API imports OK')
+          "
+      # NO tools/ DEPENDENCY, RE-DERIVED ON EVERY RUN. This is the property that made the
+      # package separable, so it is checked rather than trusted: an import of `tools.` or
+      # `icdev.tools.` creeping back in would couple the shared core to ONE parent's layout.
+      - name: Core does not import the parent tree
+        run: |
+          python - <<'PY'
+          import ast, pathlib, sys
+          bad = []
+          for p in pathlib.Path("icdev/core").rglob("*.py"):
+              tree = ast.parse(p.read_text(encoding="utf-8"))
+              for node in ast.walk(tree):
+                  mods = []
+                  if isinstance(node, ast.Import):
+                      mods = [a.name for a in node.names]
+                  elif isinstance(node, ast.ImportFrom) and node.module:
+                      mods = [node.module]
+                  for m in mods:
+                      if m == "tools" or m.startswith("tools.") or m.startswith("icdev.tools"):
+                          bad.append(f"{p}: {m}")
+          if bad:
+              print("core imports the parent tree:", *bad, sep="\n  ")
+              sys.exit(1)
+          print("no parent-tree imports in icdev/core")
+          PY
+      - run: pytest tests -q
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install bandit
+      - run: python -m bandit -r icdev --severity-level medium
