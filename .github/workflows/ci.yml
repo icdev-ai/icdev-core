@@ -12,10 +12,11 @@ on:
   pull_request:
     branches: [main]
 
-defaults:
-  run:
-    working-directory: ${{ github.workspace }}
-
+# NO workflow-level `defaults.run.working-directory`. The parent's workflow sets one, but
+# `${{ github.workspace }}` is not an allowed expression there -- GitHub rejects the whole
+# workflow file, which is how this repo's first two runs failed before a single step ran.
+# It is redundant regardless: the workspace IS the default working directory, and this repo
+# is a single package rather than the parent's multi-root tree.
 env:
   PYTHONPATH: ${{ github.workspace }}
 
