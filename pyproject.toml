@@ -9,7 +9,7 @@ build-backend = "setuptools.build_meta"
 # the import root would rewrite every one of them for no gain, so only the DISTRIBUTION name
 # is new. The IT parent keeps the PyPI name `icdev` and depends on this.
 name = "icdev-core"
-version = "0.1.0"
+version = "0.2.0"
 description = "ICDEV shared core: domain declaration, path resolution, identity assertion and sensitivity labelling for the ICDEV[IT] and ICDEV[FT] parents."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -38,8 +38,24 @@ dependencies = [
 [project.urls]
 Homepage = "https://github.com/icdev-ai/icdev-core"
 
+# NAMESPACE PACKAGES, AND THIS IS LOAD-BEARING (xcore-cut-02).
+# This distribution ships `icdev/core/` and deliberately NO `icdev/__init__.py`, so `icdev` is
+# a PEP 420 namespace package. Both this distribution and the ICDEV[IT] parent install into the
+# same `icdev` name; a regular package has ONE `__path__`, so whichever were found first would
+# win and the other's subpackages would silently vanish.
+#
+# Measured before choosing this: with `pkgutil.extend_path` in BOTH, `__path__` merges but only
+# ONE `__init__.py` EXECUTES -- and when this one won, the parent's `_alias_tools_namespace()`
+# never ran, the function that makes ~1,900 `from tools.X import ...` imports work inside the
+# parent's published wheel. An order-dependent silent break of the wheel is worse than the
+# shadowing it was meant to fix. Shipping none here makes the parent's the only one, so it runs
+# whatever the path order.
+#
+# `namespaces = true` is stated rather than relied upon: it is setuptools' default today, and a
+# default that silently flips would stop `icdev.core` being discovered at all.
 [tool.setuptools.packages.find]
 include = ["icdev*"]
+namespaces = true
 
 [tool.setuptools.package-data]
 "icdev.core" = ["schema/*.yaml"]
