@@ -1,0 +1,151 @@
+# Core-compat matrix (xcore-compat-01) — would THIS change to the core break a parent?
+#
+# The core's own suite proves the core is internally consistent. It cannot prove that a parent
+# still works: the parents are separate repositories with ~10,000 modules apiece sitting on
+# `repo_root`, `assert_identity`, `load_domain` and the sensitivity ladder. Since xcore-cut-02
+# they no longer carry their own copy of this code, so a change here reaches them on the next
+# release with nothing in between.
+#
+# Each parent declares what to run, in its own repository:
+#   * `args/ci_test_files/core_compat.txt` — the modules that import core or a core subsystem
+#     (ICDEV[IT]: 165 of its 515 gated modules, derived from imports, not filenames)
+#   * `coherence_checker --tier core` — the checks a core change can actually move
+# So this workflow never encodes a parent's internals; it asks the parent what its own answer is.
+#
+# ── WHY THERE IS NO ICDEV[FT] LEG HERE, AND WHERE IT LIVES INSTEAD ──────────────────────────
+# The card specified an FT leg in this workflow, reached with a deploy-key secret. That would
+# put a read credential for the PRIVATE ICDEV[FT] repository into a PUBLIC repository's secret
+# store, where anyone who ever gains write access here can exfiltrate it — and the whole point
+# of the domain split is that nothing from the private domain comes back to the public one.
+# Trading a standing cross-repo credential for a signal that can be obtained without one is a
+# bad trade.
+#
+# The FT leg therefore runs IN ICDEV[FT], on its own schedule and on workflow_dispatch,
+# installing this package from `main`. Same two commands, same declarations, no secret in
+# either direction. It is NOT a required check here, and that limitation is real and stated:
+# a core PR gets the IT answer before merge and the FT answer after. Closing that gap needs a
+# credential decision from the repository owner, not a quieter default.
+name: core-compat
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: core-compat-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  it:
+    name: Compat — ICDEV[IT]
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Check out the core under test
+        uses: actions/checkout@v4
+        with:
+          path: core
+
+      # PUBLIC repository, so no token and no deploy key. That is why this leg can live here
+      # at all.
+      - name: Check out ICDEV[IT]
+        uses: actions/checkout@v4
+        with:
+          repository: icdev-ai/icdev
+          path: parent
+          # The parent's own gates need a merge base; several tools exit 2 rather than
+          # resolving a shallow clone to "nothing changed".
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: parent/requirements.txt
+
+      # ORDER MATTERS. The parent's requirements pin `icdev-core` at a released tag; installing
+      # them first and the PR's core second means the PR's core WINS, which is the whole point.
+      # Reversing these two silently tests the released core against the parent and reports
+      # green for a change nobody exercised.
+      - name: Install the parent's dependencies
+        working-directory: parent
+        run: |
+          pip install -r requirements.txt
+          pip install -e . 2>/dev/null || true
+
+      - name: Install the core UNDER TEST over the released one
+        run: pip install --force-reinstall --no-deps ./core
+
+      - name: Confirm the core under test is the one that resolves
+        run: |
+          python - <<'PY'
+          import importlib.metadata as md, importlib.util, pathlib, sys
+          spec = importlib.util.find_spec("icdev.core.paths")
+          origin = pathlib.Path(spec.origin) if spec and spec.origin else None
+          print("icdev-core version :", md.version("icdev-core"))
+          print("icdev.core.paths   :", origin)
+          if origin is None:
+              sys.exit("icdev.core.paths did not resolve at all")
+          # It must NOT resolve inside the parent checkout: that would mean the parent is still
+          # shadowing the package and this whole matrix is measuring nothing (the exact defect
+          # xcore-cut-02 fixed, which returned once already).
+          if "parent" in origin.parts:
+              sys.exit(f"icdev.core resolved INSIDE the parent checkout ({origin}) — "
+                       "the parent is shadowing the package and this run proves nothing")
+          PY
+
+      - name: The parent declares its own compat suite
+        id: suite
+        working-directory: parent
+        run: |
+          LIST=args/ci_test_files/core_compat.txt
+          if [ ! -f "$LIST" ]; then
+            echo "::error::$LIST is absent — this parent declares no compat suite. A matrix that"
+            echo "::error::passes over a parent it never exercised is worse than no matrix."
+            exit 1
+          fi
+          grep -v '^\s*#' "$LIST" | grep -v '^\s*$' > /tmp/compat_modules.txt
+          COUNT=$(wc -l < /tmp/compat_modules.txt)
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          echo "$COUNT module(s) declared"
+          if [ "$COUNT" -lt 20 ]; then
+            echo "::error::only $COUNT module(s) declared; the suite has been gutted"
+            exit 1
+          fi
+
+      - name: Parent test suite
+        working-directory: parent
+        env:
+          PYTHONPATH: ${{ github.workspace }}/parent
+          ICDEV_STORAGE_BACKEND: sqlite
+        run: xargs python -m pytest -q --tb=short < /tmp/compat_modules.txt
+
+      - name: Parent coherence (core tier)
+        working-directory: parent
+        env:
+          PYTHONPATH: ${{ github.workspace }}/parent
+          ICDEV_STORAGE_BACKEND: sqlite
+        run: python tools/workflow/coherence_checker.py --tier core --gate
+
+  # The aggregator branch protection points at, so adding a second parent leg later needs no
+  # change to the protected-check names. `if: always()` because GitHub SKIPS a dependent job
+  # when its dependency fails, and a skipped check is never accepted by branch protection — the
+  # PR would wait forever with no red anywhere. `!= success` rather than `== failure` because a
+  # CANCELLED leg is not `failure`, and enumerating failure reports green on a run that never
+  # finished. Both invariants fail GREEN if written wrong, which is why they are spelled out.
+  compat:
+    name: Core Compat
+    runs-on: ubuntu-latest
+    needs: [it]
+    if: always()
+    steps:
+      - name: Every parent leg succeeded
+        run: |
+          if [ "${{ needs.it.result }}" != "success" ]; then
+            echo "::error::ICDEV[IT] leg: ${{ needs.it.result }}"
+            exit 1
+          fi
+          echo "all parent legs passed"
