@@ -1,0 +1,153 @@
+# Publish icdev-core to PyPI.
+#
+# WHY THIS EXISTS: the ICDEV[IT] parent publishes `icdev` to PyPI and declares
+# `icdev-core>=0.2.0` as a hard runtime dependency. Until this package is on PyPI too, a
+# plain `pip install icdev` of any post-split release cannot resolve -- and some deployment
+# environments can ONLY run `pip install icdev`. So a core release must reach PyPI BEFORE
+# the parent release that needs it.
+#
+# Trusted Publishing (OIDC), no API token. The workflow FILE NAME (`pypi-publish.yml`) and
+# the ENVIRONMENT names (`pypi`, `testpypi`) are registered on pypi.org / test.pypi.org as
+# this project's trusted publisher; renaming either breaks publishing.
+#
+# A GitHub release runs the workflow file AS IT EXISTS AT THE TAGGED COMMIT, so a tag cut
+# before this file landed (v0.2.0) can never publish itself.
+name: Build & Publish to PyPI
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Publish target"
+        required: true
+        default: "testpypi"
+        type: choice
+        options:
+          - testpypi
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build sdist & wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install build tools
+        run: pip install build twine
+
+      # THE TAG MUST NAME THE VERSION BEING UPLOADED. PyPI versions are immutable: a release
+      # tagged v0.2.1 over a pyproject still saying 0.2.0 would either fail on upload or,
+      # worse, publish under a number the tag does not describe.
+      - name: Release tag matches pyproject version
+        if: github.event_name == 'release'
+        run: |
+          python - <<'PY'
+          import os, sys, tomllib
+          version = tomllib.load(open("pyproject.toml", "rb"))["project"]["version"]
+          tag = os.environ["GITHUB_REF_NAME"]
+          if tag != f"v{version}":
+              sys.exit(f"release tag {tag!r} does not match pyproject version {version!r} (expected v{version})")
+          print(f"tag {tag} matches pyproject version {version}")
+          PY
+
+      - name: Build package
+        run: python -m build
+
+      - name: Check package
+        run: twine check dist/*
+
+      # Same invariant ci.yml asserts: the wheel carries icdev/core and NO icdev/__init__.py
+      # (namespace package -- the parent's __init__ must be the only one that executes).
+      - name: Wheel contains icdev/core and no icdev/__init__.py
+        run: |
+          python - <<'PY'
+          import pathlib, sys, zipfile
+          wheels = sorted(pathlib.Path("dist").glob("*.whl"))
+          if not wheels:
+              sys.exit("no wheel was built")
+          names = zipfile.ZipFile(wheels[-1]).namelist()
+          missing = [n for n in ("icdev/core/__init__.py", "icdev/core/paths.py",
+                                 "icdev/core/context.py", "icdev/core/domain.py",
+                                 "icdev/core/sensitivity.py",
+                                 "icdev/core/schema/tables.yaml") if n not in names]
+          if missing:
+              sys.exit("wheel %s is missing: %s" % (wheels[-1].name, missing))
+          if "icdev/__init__.py" in names:
+              sys.exit("wheel ships icdev/__init__.py -- it must stay a namespace package")
+          print("wheel %s OK" % wheels[-1].name)
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  test-install:
+    name: Test install (Python ${{ matrix.python }} / ${{ matrix.os }})
+    needs: build
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.9", "3.11", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Install wheel
+        run: pip install dist/*.whl
+        shell: bash
+
+      - name: Verify public API imports
+        run: python -c "from icdev.core.paths import repo_root; from icdev.core.context import assert_identity, check_identity, load_env; from icdev.core.domain import Domain, DomainError, load_domain; from icdev.core import sensitivity; print('icdev.core OK')"
+
+  publish-testpypi:
+    name: Publish to TestPyPI
+    needs: [build, test-install]
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'testpypi'
+    runs-on: ubuntu-latest
+    environment: testpypi
+    permissions:
+      id-token: write  # Trusted Publisher OIDC
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: [build, test-install]
+    # Release-only: the `pypi` environment admits `v*` tags only, so a manual run from a
+    # branch would be refused there anyway. Manual runs are the TestPyPI dry run.
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write  # Trusted Publisher OIDC
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
