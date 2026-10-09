@@ -81,8 +81,14 @@ public workflow, traded for hiding files that are already visible.
 pip install -e ../icdev-core     # development, from a sibling checkout
 ```
 
-Releases are semver tags; the wheel is a GitHub release asset, mirrored to a local wheelhouse
-for `pip install --no-index --find-links` on air-gapped installs. Pure Python, no build step.
+```bash
+pip install icdev-core           # from PyPI (0.2.1+); `pip install icdev` pulls it in
+```
+
+Releases are semver tags. Publishing a GitHub release runs `.github/workflows/pypi-publish.yml`,
+which uploads to PyPI via Trusted Publishing; the tag must equal `v<pyproject version>`.
+For air-gapped installs, mirror the wheel to a local wheelhouse and use
+`pip install --no-index --find-links`. Pure Python, no build step.
 
 ## Acceptance — what this package can and cannot prove
 

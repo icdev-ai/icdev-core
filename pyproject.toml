@@ -9,7 +9,7 @@ build-backend = "setuptools.build_meta"
 # the import root would rewrite every one of them for no gain, so only the DISTRIBUTION name
 # is new. The IT parent keeps the PyPI name `icdev` and depends on this.
 name = "icdev-core"
-version = "0.2.0"
+version = "0.2.1"
 description = "ICDEV shared core: domain declaration, path resolution, identity assertion and sensitivity labelling for the ICDEV[IT] and ICDEV[FT] parents."
 readme = "README.md"
 requires-python = ">=3.9"
